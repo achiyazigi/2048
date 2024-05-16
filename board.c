@@ -1,11 +1,18 @@
 #include <ncurses.h>
 #include <string.h>
 #include <stdlib.h>
-#include <math.h>
 #include <assert.h>
 
 #define MAX_VAL_DIGITS 7
 #define CHANCE_FOR_2 0.8f
+
+// board keys
+#define BK_RESTART 'r'
+#define BK_QUIT 'q'
+
+#define FLATTEN_COORDS(y, x, width) ((y) * (width) + (x))
+
+static short color_max_idx = 0;
 
 void init()
 {
@@ -17,20 +24,20 @@ void init()
     keypad(stdscr, TRUE);
     start_color();
     use_default_colors();
-    init_pair(0, COLOR_WHITE, -1);
-    init_pair(1, COLOR_GREEN, -1);
-    init_pair(2, COLOR_MAGENTA, -1);
-    init_pair(3, COLOR_BLUE, -1);
-    init_pair(4, COLOR_CYAN, -1);
-    init_pair(5, COLOR_YELLOW, -1);
-    init_pair(6, COLOR_BLACK, COLOR_WHITE);
-    init_pair(7, COLOR_GREEN, COLOR_WHITE);
-    init_pair(8, COLOR_MAGENTA, COLOR_WHITE);
-    init_pair(9, COLOR_BLUE, COLOR_WHITE);
-    init_pair(10, COLOR_CYAN, COLOR_WHITE);
-    init_pair(11, COLOR_YELLOW, COLOR_WHITE);
-    init_pair(12, COLOR_BLACK, COLOR_YELLOW);
-    init_pair(13, COLOR_GREEN, COLOR_YELLOW);
+    init_pair(color_max_idx++, COLOR_WHITE, -1);
+    init_pair(color_max_idx++, COLOR_GREEN, -1);
+    init_pair(color_max_idx++, COLOR_MAGENTA, -1);
+    init_pair(color_max_idx++, COLOR_BLUE, -1);
+    init_pair(color_max_idx++, COLOR_CYAN, -1);
+    init_pair(color_max_idx++, COLOR_YELLOW, -1);
+    init_pair(color_max_idx++, COLOR_BLACK, COLOR_WHITE);
+    init_pair(color_max_idx++, COLOR_GREEN, COLOR_WHITE);
+    init_pair(color_max_idx++, COLOR_MAGENTA, COLOR_WHITE);
+    init_pair(color_max_idx++, COLOR_BLUE, COLOR_WHITE);
+    init_pair(color_max_idx++, COLOR_CYAN, COLOR_WHITE);
+    init_pair(color_max_idx++, COLOR_YELLOW, COLOR_WHITE);
+    init_pair(color_max_idx++, COLOR_BLACK, COLOR_YELLOW);
+    init_pair(color_max_idx++, COLOR_GREEN, COLOR_YELLOW);
 }
 
 typedef struct
@@ -54,7 +61,7 @@ void board_init(Board *b, int height, int width)
 {
     b->width = width;
     b->height = height;
-    b->cells = calloc(b->width * b->height, sizeof(*b->cells));
+    b->cells = (Cell*)calloc(b->width * b->height, sizeof(*b->cells));
     b->simulation = 0;
     b->scores = 0;
     b->last_generated_y = -1;
@@ -77,7 +84,7 @@ static int log2i(int x)
 void board_set_cell_val(Board *b, int y, int x, int value)
 {
     if (!b->simulation)
-        b->cells[y * b->width + x] = (Cell){.value = value, .color_idx = log2i(value) % 14};
+        b->cells[y * b->width + x] = (Cell){.value = value, .color_idx = log2i(value) % color_max_idx};
 }
 
 int board_get_cell_val(Board *b, int y, int x)
@@ -108,11 +115,11 @@ bool board_cell_dir(Board *b, int y, int x, int vert, int horz, bool *added_indi
     }
     if (cell_value == cell_ni_value)
     {
-        if (added_indices[(y + vert) * b->width + x + horz])
+        if (added_indices[FLATTEN_COORDS((y + vert),x, b->width) + horz])
         {
             return 0;
         }
-        added_indices[(y + vert) * b->width + x + horz] = 1;
+        added_indices[FLATTEN_COORDS((y + vert),x, b->width) + horz] = 1;
         board_set_cell_val(b, y + vert, x + horz, cell_value * 2);
         board_set_cell_val(b, y, x, 0);
         return 1;
@@ -136,10 +143,9 @@ bool board_move_dir(Board *b, int vert, int horz)
     }
     int minor_index = 0;
     int major_index = 0;
-    bool *added_indices = malloc(minor_size * major_size * sizeof(*added_indices));
+    bool *added_indices = (bool*)calloc(minor_size * major_size, sizeof(*added_indices));
     for (int i = 0; i < major_size; ++i)
     {
-        memset(added_indices, 0, minor_size * major_size * sizeof(*added_indices));
         for (int j = 0; j < minor_size; ++j)
         {
             minor_index = j;
@@ -212,9 +218,10 @@ bool board_generate(Board *b)
 
 void board_render(Board *b, WINDOW *win)
 {
-    werase(win);
+    wclear(win);
     box(win, 0, 0);
 
+    // draw cells
     for (int r = 0; r < b->height; ++r)
     {
         for (int c = 0; c < b->width; ++c)
@@ -237,7 +244,16 @@ void board_render(Board *b, WINDOW *win)
             wattroff(win, COLOR_PAIR(cell.color_idx));
         }
     }
-    mvwprintw(win, b->height + 1, 1, "Scores: %d", b->scores);
+
+    mvwhline(win,b->height+1, 1, ACS_HLINE,b->width * MAX_VAL_DIGITS);
+
+    // draw keymap
+    int msg_line_idx = b->height + 2;
+    mvwprintw(win, msg_line_idx++, 1, "%c\tRestart", BK_RESTART);
+    mvwprintw(win, msg_line_idx++, 1, "%c\tQuit", BK_QUIT);
+
+    // draw scores
+    mvwprintw(win, msg_line_idx++, 1, "Scores: %d", b->scores);
     wrefresh(win);
 }
 
@@ -250,7 +266,7 @@ void render_game_over(WINDOW *win)
 
 WINDOW *board_create_window(Board *b)
 {
-    int board_height = b->height + 3;
+    int board_height = b->height + 5;
     int board_width = b->width * MAX_VAL_DIGITS + 2;
     WINDOW *win = newwin(board_height, board_width, 0, 0);
     return win;
@@ -267,7 +283,9 @@ bool board_is_game_over(Board *b)
     return result;
 }
 
-void game()
+
+// returns last input
+int game()
 {
     int input;
     Board b;
@@ -280,7 +298,7 @@ void game()
 
     bool moved = 0;
     bool game_over = 0;
-    while ((input = getch()) != 'q' && !(game_over = board_is_game_over(&b)))
+    while ((input = getch()) != BK_QUIT && input != BK_RESTART && !(game_over = board_is_game_over(&b)))
     {
         switch (input)
         {
@@ -305,17 +323,25 @@ void game()
     }
     if (game_over)
     {
-        while ((input = getch()) != 'q')
+        while ((input = getch()) != BK_QUIT && input != BK_RESTART)
             render_game_over(win);
     }
     board_free(&b);
     delwin(win);
+    return input;
 }
 
 int main(int argc, char *argv[])
 {
+    (void)argc;
+    (void)argv;
     init();
     refresh();
-    game();
+    int input = game();
+    while(input != BK_QUIT){
+        if(input == BK_RESTART){
+            input = game();
+        }
+    }
     endwin();
 }
