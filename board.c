@@ -6,13 +6,24 @@
 #define MAX_VAL_DIGITS 7
 #define CHANCE_FOR_2 0.8f
 
-// board keys
-#define BK_RESTART 'r'
-#define BK_QUIT 'q'
+enum BK_KEYS
+{
+    BK_RESTART = 'r',
+    BK_QUIT = 'q',
+    BK_MAX = 2 // Update this when adding keys
+};
 
-#define FLATTEN_COORDS(y, x, width) ((y) * (width) + (x))
+short *get_max_color_idx()
+{
+    static short color_max_idx = 0;
+    return &color_max_idx;
+}
 
-static short color_max_idx = 0;
+void init_color_pair(short fg, short bg)
+{
+    short *color_max_idx = get_max_color_idx();
+    init_pair((*color_max_idx)++, fg, bg);
+}
 
 void init()
 {
@@ -24,26 +35,26 @@ void init()
     keypad(stdscr, TRUE);
     start_color();
     use_default_colors();
-    init_pair(color_max_idx++, COLOR_WHITE, -1);
-    init_pair(color_max_idx++, COLOR_GREEN, -1);
-    init_pair(color_max_idx++, COLOR_MAGENTA, -1);
-    init_pair(color_max_idx++, COLOR_BLUE, -1);
-    init_pair(color_max_idx++, COLOR_CYAN, -1);
-    init_pair(color_max_idx++, COLOR_YELLOW, -1);
-    init_pair(color_max_idx++, COLOR_BLACK, COLOR_WHITE);
-    init_pair(color_max_idx++, COLOR_GREEN, COLOR_WHITE);
-    init_pair(color_max_idx++, COLOR_MAGENTA, COLOR_WHITE);
-    init_pair(color_max_idx++, COLOR_BLUE, COLOR_WHITE);
-    init_pair(color_max_idx++, COLOR_CYAN, COLOR_WHITE);
-    init_pair(color_max_idx++, COLOR_YELLOW, COLOR_WHITE);
-    init_pair(color_max_idx++, COLOR_BLACK, COLOR_YELLOW);
-    init_pair(color_max_idx++, COLOR_GREEN, COLOR_YELLOW);
+    init_color_pair(COLOR_WHITE, -1);
+    init_color_pair(COLOR_GREEN, -1);
+    init_color_pair(COLOR_MAGENTA, -1);
+    init_color_pair(COLOR_BLUE, -1);
+    init_color_pair(COLOR_CYAN, -1);
+    init_color_pair(COLOR_YELLOW, -1);
+    init_color_pair(COLOR_BLACK, COLOR_WHITE);
+    init_color_pair(COLOR_GREEN, COLOR_WHITE);
+    init_color_pair(COLOR_MAGENTA, COLOR_WHITE);
+    init_color_pair(COLOR_BLUE, COLOR_WHITE);
+    init_color_pair(COLOR_CYAN, COLOR_WHITE);
+    init_color_pair(COLOR_YELLOW, COLOR_WHITE);
+    init_color_pair(COLOR_BLACK, COLOR_YELLOW);
+    init_color_pair(COLOR_GREEN, COLOR_YELLOW);
 }
 
 typedef struct
 {
     int value;
-    int color_idx;
+    short color_idx;
 } Cell;
 
 typedef struct
@@ -51,7 +62,7 @@ typedef struct
     int width;
     int height;
     Cell *cells;
-    bool simulation;
+    bool simulation; // in simulation mode the cells values do not change
     int scores;
     int last_generated_y;
     int last_generated_x;
@@ -61,7 +72,7 @@ void board_init(Board *b, int height, int width)
 {
     b->width = width;
     b->height = height;
-    b->cells = (Cell*)calloc(b->width * b->height, sizeof(*b->cells));
+    b->cells = (Cell *)calloc(b->width * b->height, sizeof(*b->cells));
     b->simulation = 0;
     b->scores = 0;
     b->last_generated_y = -1;
@@ -84,7 +95,11 @@ static int log2i(int x)
 void board_set_cell_val(Board *b, int y, int x, int value)
 {
     if (!b->simulation)
-        b->cells[y * b->width + x] = (Cell){.value = value, .color_idx = log2i(value) % color_max_idx};
+    {
+
+        short max_color_idx = *get_max_color_idx();
+        b->cells[y * b->width + x] = (Cell){.value = value, .color_idx = log2i(value) % max_color_idx};
+    }
 }
 
 int board_get_cell_val(Board *b, int y, int x)
@@ -92,7 +107,7 @@ int board_get_cell_val(Board *b, int y, int x)
     return b->cells[y * b->width + x].value;
 }
 
-bool board_cell_dir(Board *b, int y, int x, int vert, int horz, bool *added_indices)
+bool board_cell_dir(Board *b, int y, int x, int vert, int horz, int *merged_idx_y, int *merged_idx_x)
 {
     if (y + vert >= b->height || y + vert < 0 || x + horz >= b->width || x + horz < 0)
     {
@@ -110,16 +125,17 @@ bool board_cell_dir(Board *b, int y, int x, int vert, int horz, bool *added_indi
     {
         board_set_cell_val(b, y + vert, x + horz, cell_value);
         board_set_cell_val(b, y, x, 0);
-        board_cell_dir(b, y + vert, x + horz, vert, horz, added_indices);
+        board_cell_dir(b, y + vert, x + horz, vert, horz, merged_idx_y, merged_idx_x);
         return 1;
     }
     if (cell_value == cell_ni_value)
     {
-        if (added_indices[FLATTEN_COORDS((y + vert),x, b->width) + horz])
-        {
+        if (y + vert == *merged_idx_y && x + horz == *merged_idx_x)
+        { // cell has been merged already
             return 0;
         }
-        added_indices[FLATTEN_COORDS((y + vert),x, b->width) + horz] = 1;
+        *merged_idx_y = y + vert;
+        *merged_idx_x = x + horz;
         board_set_cell_val(b, y + vert, x + horz, cell_value * 2);
         board_set_cell_val(b, y, x, 0);
         return 1;
@@ -129,6 +145,7 @@ bool board_cell_dir(Board *b, int y, int x, int vert, int horz, bool *added_indi
 
 bool board_move_dir(Board *b, int vert, int horz)
 {
+    assert(abs(vert) + abs(horz) == 1 && "wrond direction supplied");
     bool moved = 0;
     int major_size = b->height;
     int minor_size = b->width;
@@ -143,9 +160,10 @@ bool board_move_dir(Board *b, int vert, int horz)
     }
     int minor_index = 0;
     int major_index = 0;
-    bool *added_indices = (bool*)calloc(minor_size * major_size, sizeof(*added_indices));
     for (int i = 0; i < major_size; ++i)
     {
+        int merged_idx_y = -1;
+        int merged_idx_x = -1;
         for (int j = 0; j < minor_size; ++j)
         {
             minor_index = j;
@@ -160,30 +178,12 @@ bool board_move_dir(Board *b, int vert, int horz)
                 major_index = minor_index;
                 minor_index = temp;
             }
-            moved |= board_cell_dir(b, minor_index, major_index, vert, horz, added_indices);
+            moved |= board_cell_dir(b, minor_index, major_index, vert, horz, &merged_idx_y, &merged_idx_x);
         }
     }
-    free(added_indices);
     if (!b->simulation)
         b->scores += moved;
     return moved;
-}
-
-bool board_move_right(Board *b)
-{
-    return board_move_dir(b, 0, 1);
-}
-bool board_move_left(Board *b)
-{
-    return board_move_dir(b, 0, -1);
-}
-bool board_move_up(Board *b)
-{
-    return board_move_dir(b, -1, 0);
-}
-bool board_move_down(Board *b)
-{
-    return board_move_dir(b, 1, 0);
 }
 
 // returns false if failed to generate
@@ -245,12 +245,13 @@ void board_render(Board *b, WINDOW *win)
         }
     }
 
-    mvwhline(win,b->height+1, 1, ACS_HLINE,b->width * MAX_VAL_DIGITS);
+    mvwhline(win, b->height + 1, 1, ACS_HLINE, b->width * MAX_VAL_DIGITS);
 
     // draw keymap
     int msg_line_idx = b->height + 2;
     mvwprintw(win, msg_line_idx++, 1, "%c\tRestart", BK_RESTART);
     mvwprintw(win, msg_line_idx++, 1, "%c\tQuit", BK_QUIT);
+    assert(msg_line_idx - BK_MAX == b->height + 2 && "Some function keys not presented in the renderer");
 
     // draw scores
     mvwprintw(win, msg_line_idx++, 1, "Scores: %d", b->scores);
@@ -278,11 +279,10 @@ bool board_is_game_over(Board *b)
     bool prev_simulation_mode = b->simulation;
     b->simulation = 1;
 
-    result = !(board_move_down(b) || board_move_up(b) || board_move_left(b) || board_move_right(b));
+    result = !(board_move_dir(b, 0, 1) || board_move_dir(b, 0, -1) || board_move_dir(b, 1, 0) || board_move_dir(b, -1, 0));
     b->simulation = prev_simulation_mode;
     return result;
 }
-
 
 // returns last input
 int game()
@@ -303,16 +303,16 @@ int game()
         switch (input)
         {
         case KEY_LEFT:
-            moved = board_move_left(&b);
+            moved = board_move_dir(&b, 0, -1);
             break;
         case KEY_RIGHT:
-            moved = board_move_right(&b);
+            moved = board_move_dir(&b, 0, 1);
             break;
         case KEY_UP:
-            moved = board_move_up(&b);
+            moved = board_move_dir(&b, -1, 0);
             break;
         case KEY_DOWN:
-            moved = board_move_down(&b);
+            moved = board_move_dir(&b, 1, 0);
             break;
         }
         if (moved)
@@ -337,11 +337,16 @@ int main(int argc, char *argv[])
     (void)argv;
     init();
     refresh();
-    int input = game();
-    while(input != BK_QUIT){
-        if(input == BK_RESTART){
+    int input = BK_RESTART;
+    while (input != BK_QUIT)
+    {
+        if (input == BK_RESTART)
+        {
             input = game();
+            assert((input == BK_RESTART || input == BK_QUIT) && "game function rentuned unexpected input");
         }
     }
+
     endwin();
+    return 0;
 }
